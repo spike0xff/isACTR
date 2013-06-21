@@ -3,10 +3,11 @@
 
 #define VERSION_MAJOR 0
 #define VERSION_MINOR 0
-#define VERSION_RELEASE 6
+#define VERSION_RELEASE 7
 #define VERSION_BUILD 0
 
 /*
+0.0.7.0	2013.06.20	spike	reads and superficially parses model as S-exprs
 0.0.6.0	2013.06.17	spike	simple read-eval-print loop working
 0.0.5.0	2013.05.21	spike	stubs for some Lisp functions
 0.0.4.0	2013.04.30	spike	starting on production matching	

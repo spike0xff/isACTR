@@ -27,9 +27,21 @@
     <ClCompile Include="lispeval.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="lispactr.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="lisp.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="version.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="lispactr.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="isactr.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

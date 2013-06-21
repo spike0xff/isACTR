@@ -47,6 +47,10 @@ LISPTR subr_eq(LISPTR x, LISPTR y)
 	return (x==y) ? T : NIL;
 }
 
+LISPTR subr_quit(void)
+{
+	exit(0);
+}
 
 static CELL cellBlock[MAX_CELLS];
 static int cellCount;
@@ -86,6 +90,7 @@ void lisp_init(void)
 	def_subr1(L"NUMBERP", subr_numberp);
 	def_subr2(L"EQ", subr_eq);
 	def_subr2(L"ASSOC", assoc);
+	def_subr0(L"QUIT", subr_quit);
 }
 
 void lisp_shutdown(void)

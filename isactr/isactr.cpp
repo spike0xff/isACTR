@@ -9,8 +9,8 @@
 #include <assert.h>
 #include "version.h"
 #include "lisp.h"		// "Lisp" functions
-
-typedef char* chunk_name;
+#include "isactr.h"		// isACTR API
+#include "lispactr.h"	// ACT-R-in-Lisp stuff
 
 void isactr_process_stream(FILE* in, FILE* out, FILE* err);
 
@@ -35,32 +35,12 @@ int main(int argc, char* argv[])
 		}
 	}
 	lisp_init();
+	init_lisp_actr();
 	isactr_process_stream(in, out, stderr);
 	lisp_shutdown();
 	fgetwc(stdin);
 	return 0;
 }
-
-typedef void (*isactr_event_action)(struct _isactr_model*, struct _isactr_event*);
-
-typedef struct _isactr_event {
-	struct _isactr_event*	next;
-	float					time;			// when this event happens
-	float					priority;
-	bool					requested;
-	isactr_event_action	action;
-} isactr_event;
-
-const float PRIORITY_MAX = (float)(-log(0.0));
-const float PRIORITY_MIN = (float)log(0.0);
-
-typedef struct _isactr_model {
-	FILE*			in;
-	FILE*			out;
-	FILE*			err;
-	float			time;
-	isactr_event*	nextEvent;				// queued-up events
-} isactr_model;
 
 static bool precedes(isactr_event* evt1, isactr_event* evt2)
 {
@@ -185,21 +165,6 @@ void isactr_model_release(isactr_model* model)
 bool isactr_model_load(isactr_model* model, FILE* in, FILE* err)
 {
 	fputs("** Loading Model\n", model->out);
-	bool sol = true;
-	while (true) {
-		wchar_t ch = fgetwc(in);
-		if (ch == WEOF) break;
-		if (sol) {
-			fputs(">> ", model->out); sol = false;
-		}
-		fputwc(ch, model->out);
-		if (ch == '\n') {
-			sol = true;
-		}
-	}
-	if (!sol) fputs("\n", model->out);
-	fputs("** End Model\n---------------------\n", model->out);
-	fseek(in, 0L, SEEK_SET);
 	while (true) {
 		LISPTR m = lisp_read(in);
 		// debugging - trace what we just read:
@@ -212,6 +177,7 @@ bool isactr_model_load(isactr_model* model, FILE* in, FILE* err)
 		lisp_print(lisp_eval(m), model->out);
 		fputs("\n", model->out);
 	}
+	fputs("** End Model\n---------------------\n", model->out);
 	return true;
 }
 
@@ -224,7 +190,7 @@ void isactr_model_run(isactr_model* model)
 }
 
 
-void fn_goal_focus(isactr_model* model, chunk_name cn)
+void isactr_set_goal_focus(isactr_model* model, chunk_name cn)
 {
 	isactr_event* evt = (isactr_event*)malloc(sizeof isactr_event);
 	evt->time = model->time;		// i.e. 'now'
@@ -244,7 +210,6 @@ void isactr_process_stream(FILE* in, FILE* out, FILE* err)
 	model.out = out;
 	model.err = err;
 
-	fn_goal_focus(&model, "FIRST-GOAL");
 	isactr_push_event_at_time(&model, 0.050, "production-fired start");
 	isactr_push_event_at_time(&model, 0.100, "retrieved-chunk C");
 	isactr_push_event_at_time(&model, 0.100, "production-fired increment");
