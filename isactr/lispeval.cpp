@@ -32,29 +32,6 @@ LISPTR apply(LISPTR f, LISPTR args)
 	return f;
 }
 
-bool eql(LISPTR x, LISPTR y)
-{
-	if (x == y) {
-		return true;
-	}
-	if (numberp(x)) {
-		return numberp(y) && number_value(x)==number_value(y);
-	}
-	return false;
-}
-
-LISPTR assoc(LISPTR item, LISPTR alist)
-{
-	while (consp(alist)) {
-		LISPTR binding = car(alist);
-		if (consp(binding) && eql(item, car(binding))) {
-			return binding;
-		}
-		alist = cdr(alist);
-	}
-	return NIL;
-}
-
 // evaluate form x with lexical bindings a
 LISPTR eval(LISPTR x)
 {
@@ -95,3 +72,20 @@ LISPTR progn(LISPTR x)
 	}
 	return v;
 } // progn
+
+void lisp_REPL(FILE* in, FILE* out, FILE* err)
+{
+	while (true) {
+		LISPTR m = lisp_read(in);
+		// debugging - trace what we just read:
+		fputs("lisp_read => ", out);
+		lisp_print(m, out);
+		fputs("\n", out);
+		// NIL means end-of-job:
+		if (m==NIL) break;
+		LISPTR v = lisp_eval(m);
+		fputs("lisp_eval => ", out);
+		lisp_print(v, out);
+		fputs("\n", out);
+	}
+}

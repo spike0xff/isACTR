@@ -20,6 +20,9 @@ LISPTR lisp_print(LISPTR x, FILE* out);
 
 LISPTR lisp_eval(LISPTR x);
 
+// Read-Eval-Print-Loop
+void lisp_REPL(FILE* in, FILE* out, FILE* err);
+
 void lisp_error(const wchar_t* msg);
 
 LISPTR cons(LISPTR x, LISPTR y);
@@ -27,6 +30,7 @@ LISPTR car(LISPTR x);
 LISPTR cdr(LISPTR x);
 LISPTR cadr(LISPTR x);
 LISPTR cddr(LISPTR x);
+LISPTR caddr(LISPTR x);
 LISPTR assoc(LISPTR item, LISPTR alist);
 LISPTR defvar(LISPTR x, LISPTR y);
 bool consp(LISPTR x);
@@ -35,6 +39,7 @@ bool atomp(LISPTR x);
 bool symbolp(LISPTR x);
 bool stringp(LISPTR x);
 bool numberp(LISPTR x);
+bool eql(LISPTR x, LISPTR y);
 LISPTR intern(const wchar_t* name);
 const LISPTR symbol_name(LISPTR x);
 LISPTR symbol_value(LISPTR x);
@@ -44,6 +49,7 @@ LISPTR intern_string(const wchar_t* str);
 LISPTR intern_number(const wchar_t* str);
 LISPTR progn(LISPTR x);
 LISPTR rplacd(LISPTR x, LISPTR y);		// returns modified x
+LISPTR nconc(LISPTR x, LISPTR y);		// modifies x to end with y, returns x
 #define string_text(x) ((const wchar_t*)(x))
 #define number_value(x) (*(double*)(x))
 

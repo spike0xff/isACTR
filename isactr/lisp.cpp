@@ -145,6 +145,29 @@ bool numberp(LISPTR x)
 		   x < &numberPool[MAX_NUMBERS];
 }
 
+bool eql(LISPTR x, LISPTR y)
+{
+	if (x == y) {
+		return true;
+	}
+	if (numberp(x)) {
+		return numberp(y) && number_value(x)==number_value(y);
+	}
+	return false;
+}
+
+LISPTR assoc(LISPTR item, LISPTR alist)
+{
+	while (consp(alist)) {
+		LISPTR binding = car(alist);
+		if (consp(binding) && eql(item, car(binding))) {
+			return binding;
+		}
+		alist = cdr(alist);
+	}
+	return NIL;
+}
+
 LISPTR car(LISPTR x)
 {
 	if (consp(x)) {
@@ -195,6 +218,23 @@ LISPTR cddr(LISPTR x)
 	return NIL;
 }
 
+LISPTR caddr(LISPTR x)
+{
+	if (consp(x)) {
+		x = ((CELL*)x)->cdr;
+		if (consp(x)) {
+			x = ((CELL*)x)->cdr;
+			if (consp(x)) {
+				return ((CELL*)x)->car;
+			}
+		}
+	}
+	if (x != NIL) {
+		lisp_error(L"bad arg to caddr");
+	}
+	return NIL;
+} // caddr
+
 LISPTR defvar(LISPTR x, LISPTR y)
 {
 	if (symbolp(x)) {
@@ -208,6 +248,20 @@ LISPTR rplacd(LISPTR x, LISPTR y)
 	((CELL*)x)->cdr = y;
 	return x;
 }
+
+// destructive concatenate
+LISPTR nconc(LISPTR x, LISPTR y)
+{
+	if (x == NIL) {
+		return y;
+	}
+	if (!consp(x)) {
+		lisp_error(L"1st argument to nconc is not a list");
+		return NIL;
+	}
+	// lazy, lazy. Is this how your mama taught you?
+	return rplacd(x, nconc(cdr(x), y));
+} // nconc
 
 LISPTR intern_string(const wchar_t* s)
 {

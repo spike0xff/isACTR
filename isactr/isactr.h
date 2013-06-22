@@ -3,12 +3,13 @@
 
 #include <math.h>		// for log
 
-const float PRIORITY_MAX = (float)(-log(0.0));
-const float PRIORITY_MIN = (float)log(0.0);
+const float MAX_PRIORITY = (float)(-log(0.0));
+const float MIN_PRIORITY = (float)log(0.0);
 
 void isactr_model_init(void);
 void isactr_model_release(void);
-bool isactr_model_load(FILE* in, FILE* err);
+bool isactr_model_load(FILE* in, FILE* out, FILE* err);
+void isactr_model_run(double dDur);
 
 void isactr_define_chunk_type(LISPTR ct);
 
@@ -16,9 +17,13 @@ void isactr_define_chunk_type(LISPTR ct);
 // chunk format is (<name> ISA <chunktype> { <slotname> <value> })
 void isactr_add_dm(LISPTR chunk);
 
-// Add a production to PM.
-// production format is (<name> <LHS> ==> <RHS>)
-void isactr_add_production(LISPTR prod);
+// find and return the chunk in DM with the given name
+LISPTR isactr_get_chunk(LISPTR chunk_name);
+
+// Add a production to PM, lhs ==> rhs.
+// lhs and rhs are lists of clauses of the form
+// (<buffer> <operation> <arg> <arg> ...)
+void isactr_add_production(LISPTR name, LISPTR lhs, LISPTR rhs);
 
 // note: takes a Symbol
 void isactr_set_goal_focus(LISPTR chunk_name);
