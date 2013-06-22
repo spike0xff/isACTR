@@ -1,4 +1,5 @@
 #include "lisp.h"
+#include "isactr.h"
 
 static LISPTR SGP, CHUNK_TYPE, ADD_DM, P, GOAL_FOCUS;
 
@@ -16,21 +17,36 @@ LISPTR sgp(LISPTR args)
 
 LISPTR chunk_type(LISPTR args)
 {
+	isactr_define_chunk_type(args);
 	return CHUNK_TYPE;
 }
 
 LISPTR add_dm(LISPTR args)
 {
+	while (consp(args)) {
+		LISPTR chunk = car(args);
+		args = cdr(args);
+		isactr_add_dm(chunk);
+	}
 	return ADD_DM;
 }
 
 LISPTR p(LISPTR args)
 {
+	// each p defines one production.
+	// car(args) = name of the production
+	// cdr(args) = production (<LHS> ==> <RHS>)
+	isactr_add_production(args);
 	return P;
 }
 
 LISPTR goal_focus(LISPTR args)
 {
+	if (!consp(args) || !symbolp(car(args))) {
+		lisp_error(L"argument-1 to GOAL-FOCUS is not a symbol");
+	} else {
+		isactr_set_goal_focus(car(args));
+	}
 	return GOAL_FOCUS;
 }
 
@@ -70,15 +86,7 @@ void init_lisp_actr(void)
 	ADD_DM = intern(L"ADD-DM");
 	P = intern(L"P");
 	GOAL_FOCUS = intern(L"GOAL-FOCUS");
-	//defvar(T, T);
 	def_fsubr(L"DEFINE-MODEL", define_model);
 	def_subr0(L"CLEAR-ALL", clear_all);
-	//def_subr1(L"CAR", car);
-	//def_subr1(L"CDR", cdr);
-	//def_subr2(L"CONS", cons);
-	//def_subr1(L"ATOMP", subr_atomp);
-	//def_subr1(L"NUMBERP", subr_numberp);
-	//def_subr2(L"EQ", subr_eq);
-	//def_subr2(L"ASSOC", assoc);
 }
 
