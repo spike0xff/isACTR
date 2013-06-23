@@ -5,6 +5,7 @@
 #include <string.h>
 
 static LISPTR SGP, CHUNK_TYPE, ADD_DM, P, GOAL_FOCUS, RIGHT_ARROW;
+static LISPTR BUFFER_TEST;
 
 LISPTR clear_all(void)
 {
@@ -44,66 +45,112 @@ static bool is_bufspec(LISPTR x)
 	return false;
 }
 
-static LISPTR copy_test(LISPTR p)
+static bool is_variable(LISPTR x)
+{
+	return symbolp(x) &&
+		  '=' == string_text(symbol_name(x))[0];
+} // is_variable
+
+static LISPTR copy_test(LISPTR p, LISPTR* pvars)
 {
 	if (!consp(p)) {
 		return p;
 	}
-	if (!is_bufspec(car(p))) {
-		return cons(car(p), copy_test(cdr(p)));
+	LISPTR item = car(p);
+	if (!is_bufspec(item)) {
+		if (is_variable(item)) {
+			LISPTR binding = assoc(item, *pvars);
+			if (binding==NIL) {
+				binding = cons(item,NIL);
+				*pvars = cons(binding, *pvars);
+			}
+			item = binding;
+		}
+		return cons(item, copy_test(cdr(p), pvars));
 	}
 	return NIL;
-}
+} // copy_test
 
-static bool parse_test(LISPTR* pp, LISPTR* ptest)
+static LISPTR extract_buffer_name(LISPTR sym)
+{
+	if (!symbolp(sym)) {
+		lisp_error(L"buffer-spec in production is not a symbol");
+		return NIL;
+	}
+	wchar_t bufname[128];
+	wcscpy_s(bufname, string_text(symbol_name(sym)));
+	bufname[wcslen(bufname)-1] = 0;
+	return intern(bufname+1);
+} // extract_buffer_name
+
+static bool parse_clause(LISPTR* pp, LISPTR* ptest, LISPTR* pvars)
 {
 	LISPTR p = *pp;
-	if (consp(p) && is_bufspec(car(p))) {
-		*ptest = cons(car(p), copy_test(cdr(p)));
-		p = cdr(p);
-		while (consp(p) && !is_bufspec(car(p))) {
+	if (consp(p)) {
+		if (is_bufspec(car(p))) {
+			*ptest = cons(BUFFER_TEST, cons(extract_buffer_name(car(p)), copy_test(cdr(p), pvars)));
 			p = cdr(p);
+			while (consp(p) && !is_bufspec(car(p))) {
+				p = cdr(p);
+			}
+			assert(p==NIL || is_bufspec(car(p)));
+			*pp = p;
+			return true;
 		}
-		assert(p==NIL || is_bufspec(car(p)));
-		*pp = p;
-		return true;
 	}
 	return false;
+} // parse_clause
+
+static bool parse_condition(LISPTR* pp, LISPTR* pcond, LISPTR* pvars)
+{
+	return parse_clause(pp, pcond, pvars);
 }
 
-static bool parse_production(LISPTR p, LISPTR* plhs, LISPTR* prhs)
+static bool parse_action(LISPTR* pp, LISPTR* pact, LISPTR* pvars)
 {
-	if (!consp(p)) {
-		if (p != NIL) {
-			lisp_error(L"junk at end of production");
-			return false;
+	return parse_clause(pp, pact, pvars);
+}
+
+static bool parse_production(LISPTR p, LISPTR* plhs, LISPTR* prhs, LISPTR* pvars)
+{
+	while (consp(p)) {
+		// it's a list, it starts with either a right-arrow (==>)
+		// or a buffer-spec, like =goal>
+		if (car(p)==RIGHT_ARROW) {
+			if (!prhs) {
+				lisp_error(L"2nd ==> in production??");
+				return false;
+			}
+			// recurse to parse right-hand side
+			// (tail recursion, could be flattened)
+			return parse_production(cdr(p), prhs, NULL, pvars);
 		}
-		if (prhs!=NULL) {
-			lisp_error(L"didn't find ==> in production");
-			return false;
+		LISPTR clause = NIL;
+		if (prhs) {
+			// parse LHS
+			if (!parse_condition(&p, &clause, pvars)) {
+				return false;
+			}
+		} else {
+			// working on RHS
+			if (!parse_action(&p, &clause, pvars)) {
+				return false;
+			}
 		}
-		// we were parsing the RHS
-		// end of production, we're done, yay!
-		return true;
+		// parsed a clause, append to the LHS or RHS
+		*plhs = nconc(*plhs, cons(clause, NIL));
+	} // while parsing production
+	// end of production, check for syntax errors
+	if (p != NIL) {
+		lisp_error(L"junk at end of production");
+		return false;
 	}
-	// it's a list, it starts with either a right-arrow (==>)
-	// or a buffer-spec, like =goal>
-	if (car(p)==RIGHT_ARROW) {
-		if (!prhs) {
-			lisp_error(L"2nd ==> in production??");
-			return false;
-		}
-		// recurse to parse right-hand side
-		return parse_production(cdr(p), prhs, NULL);
+	if (prhs!=NULL) {
+		lisp_error(L"didn't find ==> in production");
+		return false;
 	}
-	LISPTR test = NIL;
-	if (parse_test(&p, &test)) {
-		*plhs = nconc(*plhs, cons(test, NIL));
-		// recurse parsing the rest of the production
-		return parse_production(p, plhs, prhs);
-	}
-	lisp_error(L"nonsense in the middle of a production");
-	return false;
+	// OK!
+	return true;
 }
 
 LISPTR p(LISPTR args)
@@ -120,8 +167,9 @@ LISPTR p(LISPTR args)
 		} else {
 			LISPTR lhs = NIL;
 			LISPTR rhs = NIL;
-			if (parse_production(cdr(args), &lhs, &rhs)) {
-				isactr_add_production(name, lhs, rhs);
+			LISPTR vars = NIL;		// alist of variables
+			if (parse_production(cdr(args), &lhs, &rhs, &vars)) {
+				isactr_add_production(name, lhs, rhs, vars);
 			}
 		}
 	}
@@ -182,6 +230,7 @@ void init_lisp_actr(void)
 	P = intern(L"P");
 	GOAL_FOCUS = intern(L"GOAL-FOCUS");
 	RIGHT_ARROW = intern(L"==>");
+	BUFFER_TEST = intern(L"BUFFER-TEST");
 	def_fsubr(L"DEFINE-MODEL", define_model);
 	def_subr0(L"CLEAR-ALL", clear_all);
 	def_subr1(L"RUN", subr_run);

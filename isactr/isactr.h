@@ -23,7 +23,7 @@ LISPTR isactr_get_chunk(LISPTR chunk_name);
 // Add a production to PM, lhs ==> rhs.
 // lhs and rhs are lists of clauses of the form
 // (<buffer> <operation> <arg> <arg> ...)
-void isactr_add_production(LISPTR name, LISPTR lhs, LISPTR rhs);
+void isactr_add_production(LISPTR name, LISPTR lhs, LISPTR rhs, LISPTR vars);
 
 // note: takes a Symbol
 void isactr_set_goal_focus(LISPTR chunk_name);

@@ -66,12 +66,15 @@ typedef struct _isactr_model {
 
 isactr_model model;
 LISPTR GOAL, RETRIEVAL;
+LISPTR BUFFER_TEST;
 
 ///////////////////////////////////////////////////////////////////////
 // forward function declarations
 void isactr_process_stream(FILE* in, FILE* out, FILE* err);
 isactr_event* isactr_push_event_at_time(double t, isactr_event_action action);
 void isactr_clear_event_queue(void);
+static void event_action_conflict_resolution(isactr_event* evt);
+void isactr_fire_production(LISPTR p);
 
 ///////////////////////////////////////////////////////////////////////
 // functions
@@ -99,6 +102,8 @@ int main(int argc, char* argv[])
 	lisp_init();
 	GOAL = intern(L"GOAL");
 	RETRIEVAL = intern(L"RETRIEVAL");
+	BUFFER_TEST = intern(L"BUFFER-TEST");
+
 	isactr_model_init();
 	init_lisp_actr();
 	model.in = in;
@@ -160,56 +165,153 @@ static void event_action_null(isactr_event* evt)
 
 static void event_action_fire_production(isactr_event* evt)
 {
-	LISPTR p = evt->chunk;
+	LISPTR p = evt->chunk;		// the production that fired
 	LISPTR pname = car(p);
 	fprintf(model.out, "     %5.3f   %-22ls %s %ls\n",
 		model.time, L"PROCEDURAL", "PRODUCTION-FIRED", string_text(symbol_name(pname)));
+	isactr_fire_production(p);
+	evt = isactr_push_event_at_time(model.time, event_action_conflict_resolution);
+}
+
+static LISPTR modify_chunk(LISPTR chunk, LISPTR slotName, LISPTR value)
+{
+	if (consp(chunk)) {
+		if (car(chunk)==slotName) {
+			return cons(slotName, cons(value, cddr(chunk)));
+		} else {
+			return cons(car(chunk), cons(cadr(chunk), modify_chunk(cddr(chunk), slotName, value)));
+		}
+	}
+	return cons(slotName, cons(value, NIL));
+} // modify_chunk
+
+static bool buffer_modification(LISPTR action)
+{
+	LISPTR buffer = car(action); action = cdr(action);
+	LISPTR* pbuffer = NULL;
+	if (buffer == GOAL) {
+		pbuffer = &model.goal;
+	} else if (buffer == RETRIEVAL) {
+		pbuffer = &model.retrieval;
+	} else {
+		fprintf(model.err, "unknown buffer (%ls) in RHS action", string_text(symbol_name(buffer)));
+		return false;
+	}
+	fprintf(model.out, "     %5.3f   %-22ls %s %ls\n",
+		model.time, L"PROCEDURAL", "BUFFER-READ-ACTION", string_text(symbol_name(buffer)));
+	while (consp(action)) {
+		LISPTR slotName = car(action);
+		LISPTR value = cadr(action);
+		if (consp(value)) {
+			value = cdr(value);
+		}
+		*pbuffer = modify_chunk(*pbuffer, slotName, value);
+		action = cddr(action);
+	}
+	fprintf(model.out, "     %5.3f   %-22ls %s %ls\n",
+		model.time, L"PROCEDURAL", "MOD-BUFFER-CHUNK", string_text(symbol_name(buffer)));
+	printf("--goal:      "); lisp_print(model.goal, stdout); printf("\n");
+	printf("--retrieval: "); lisp_print(model.retrieval, stdout); printf("\n");
+	return true;
+}
+
+bool apply_action(LISPTR action)
+{
+	LISPTR op = car(action);
+	action = cdr(action);
+	if (op == BUFFER_TEST) {
+		// technically, a buffer modification
+		return buffer_modification(action);
+	}
+	fprintf(model.err, "invalid RHS action type: %ls\n", string_text(symbol_name(op)));
+	return false;
+}
+
+// fire production p.
+// assume LHS matched, variables are bound
+void isactr_fire_production(LISPTR p)
+{
+	LISPTR rhs = caddr(p);
+	while (consp(rhs)) {
+		LISPTR action = car(rhs);
+		apply_action(action);
+		rhs = cdr(rhs);
+	}
 }
 
 // true if the named slot is in the chunk and its value matches the specified value.
 static bool slot_match(LISPTR slot, LISPTR value, LISPTR chunk)
 {
-	printf("slot_match(%ls, ", string_text(symbol_name(slot)));
-	lisp_print(value, stdout);
-	printf(", ");
-	lisp_print(chunk, stdout);
-	printf(")\n");
+	bool bMatch = false;
+	printf("slot_match %ls, ", string_text(symbol_name(slot)));
+	lisp_print(value, stdout); printf(", "); lisp_print(chunk, stdout);
 	while (consp(chunk)) {
-		if (slot == cadr(chunk)) {
+		if (slot == car(chunk)) {
 			// slot found, match the value
-			return eql(value, caddr(chunk));
+			if (!consp(value)) {
+				bMatch = eql(value, cadr(chunk));
+			} else if (cdr(value)!=NIL) {
+				bMatch = eql(cdr(value), cadr(chunk));
+			} else {
+				rplacd(value, cadr(chunk));
+				bMatch = true;
+			}
+			break;
 		}
 		chunk = cddr(chunk);
 	}
-	return false;
+	if (chunk==NIL && value==NIL) {
+		// Treat slot not found same as (slot NIL).
+		bMatch = true;
+	}
+	printf(" => %s\n", bMatch ? "true" : "false");
+	return bMatch;
 } // slot_match
+
+static bool buffer_test(LISPTR cond)
+{
+	LISPTR buffer = car(cond);			// buffer name
+	cond = cdr(cond);
+	// get the contents of the specified buffer
+	LISPTR contents = NIL;
+	if (buffer == GOAL) {
+		contents = model.goal;
+	} else if (buffer == RETRIEVAL) {
+		contents = model.retrieval;
+	} else {
+		fprintf(model.err, "unknown buffer (%ls) in LHS clause", string_text(symbol_name(buffer)));
+		return false;
+	}
+	// match the buffer contents against the rest of the cond clause
+	while (consp(cond)) {
+		LISPTR slot = car(cond);
+		LISPTR value = cadr(cond);
+		if (!slot_match(slot, value, contents)) {
+			break;
+		}
+		cond = cddr(cond);
+	} // while cond
+	return cond == NIL;
+} // buffer_test
+
+static bool test_condition(LISPTR cond)
+{
+	LISPTR op = car(cond);				// operation, like BUFFER-TEST
+	cond = cdr(cond);
+	if (op == BUFFER_TEST) {
+		return buffer_test(cond);
+	}
+	fprintf(model.err, "invalid condition test: %ls\n", string_text(symbol_name(op)));
+	return false;
+} // test_condition
 
 static bool lhs_matches(LISPTR lhs)
 {
 	while (consp(lhs)) {
-		LISPTR test = car(lhs); lhs = cdr(lhs);
-		LISPTR buffer = car(test);
-		// get the contents of the specified buffer
-		LISPTR contents = NIL;
-		if (buffer == GOAL) {
-			contents = model.goal;
-		} else if (buffer == RETRIEVAL) {
-			contents = model.retrieval;
-		}
-		// match the buffer contents against the rest of the test clause
-		test = cddr(test);
-		while (consp(test)) {
-			LISPTR slot = car(test);
-			LISPTR value = cadr(test);
-			if (!slot_match(slot, value, contents)) {
-				break;
-			}
-			test = cddr(test);
-		} // while test
-		if (test != NIL) {
+		LISPTR cond = car(lhs); lhs = cdr(lhs);
+		if (!test_condition(cond)) {
 			return false;
 		}
-		// one test passed
 	} // while lhs
 	return true;
 } // lhs_matches
@@ -217,9 +319,14 @@ static bool lhs_matches(LISPTR lhs)
 
 static bool is_ready_to_fire(LISPTR p)
 {
-	printf("is_ready_to_fire? ");
-	lisp_print(p, stdout);
-	printf("\n");
+	printf("is_ready_to_fire? "); lisp_print(car(p), stdout); printf("\n");
+	// set all production vars to value NIL
+	LISPTR vars = cadr(cddr(p));
+	while (consp(vars)) {
+		rplacd(car(vars), NIL);
+		vars = cdr(vars);
+	}
+	// match the left-hand-side against current model state
 	if (lhs_matches(cadr(p))) {
 		printf(" ... ready to fire!\n");
 		return true;
@@ -270,6 +377,7 @@ static void event_action_set_buffer_chunk(isactr_event* evt)
 	if (chunk==NIL) {
 		lisp_error(L"set_buffer_chunk: named chunk not found");
 	} else {
+		chunk = cdr(chunk);					// don't include chunk-name in buffer
 		const char* area = "<buffer?>";
 		if (evt->buffer == GOAL) {
 			model.goal = chunk;
@@ -435,12 +543,15 @@ LISPTR isactr_get_chunk(LISPTR chunk_name)
 // (<buffer> <action> <arg> <arg>...)
 // Adds a triplet of this form to the internal PM:
 // (<name> <lhs> <rhs>)
-void isactr_add_production(LISPTR name, LISPTR lhs, LISPTR rhs)
+void isactr_add_production(LISPTR name, LISPTR lhs, LISPTR rhs, LISPTR vars)
 {
-	LISPTR prod = cons(name, cons(lhs, cons(rhs, NIL)));
-	model.pm = cons(prod, model.pm);
-	fprintf(model.out, "PRODUCTION:\n  ");
-	lisp_print(prod, model.out);
+	LISPTR prod = cons(name, cons(lhs, cons(rhs, cons(vars, NIL))));
+	// append production to production memory, so productions are tested in order.
+	model.pm = nconc(model.pm, cons(prod, NIL));
+	fprintf(model.out, "PRODUCTION: %ls\n  LHS: ", string_text(symbol_name(name)));
+	lisp_print(lhs, model.out);
+	fprintf(model.out, "\n  RHS: "); lisp_print(rhs, model.out);
+	fprintf(model.out, "\n  VARS: "); lisp_print(vars, model.out);
 	fprintf(model.out, "\n");
 }
 

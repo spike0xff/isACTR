@@ -99,7 +99,7 @@ void lisp_shutdown(void)
 
 void lisp_error(const wchar_t* msg)
 {
-	fwprintf(stdout, L"**LISP ERROR: %s\n", msg);
+	fwprintf(stdout, L"**ERROR: %s\n", msg);
 }
 
 LISPTR cons(LISPTR x, LISPTR y)

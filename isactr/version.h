@@ -3,10 +3,11 @@
 
 #define VERSION_MAJOR 0
 #define VERSION_MINOR 0
-#define VERSION_RELEASE 8
+#define VERSION_RELEASE 9
 #define VERSION_BUILD 0
 
 /*
+0.0.9.0	2013.06.22	spike	minimal LHS matching working
 0.0.8.0	2013.06.22	spike	partial parsing and matching of productions
 0.0.7.0	2013.06.20	spike	reads and superficially parses model as S-exprs
 0.0.6.0	2013.06.17	spike	simple read-eval-print loop working
