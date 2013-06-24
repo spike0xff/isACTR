@@ -66,7 +66,12 @@ typedef struct _isactr_model {
 
 isactr_model model;
 LISPTR GOAL, RETRIEVAL;
+LISPTR SGP, CHUNK_TYPE, ADD_DM, P, GOAL_FOCUS, RIGHT_ARROW;
 LISPTR BUFFER_TEST;
+LISPTR MOD_BUFFER_CHUNK;
+LISPTR MODULE_REQUEST;
+LISPTR CLEAR_BUFFER;
+LISPTR BANG_OUTPUT;
 
 ///////////////////////////////////////////////////////////////////////
 // forward function declarations
@@ -100,9 +105,21 @@ int main(int argc, char* argv[])
 		}
 	}
 	lisp_init();
+
+	// create our standard symbols
 	GOAL = intern(L"GOAL");
 	RETRIEVAL = intern(L"RETRIEVAL");
+	SGP = intern(L"SGP");
+	CHUNK_TYPE = intern(L"CHUNK-TYPE");
+	ADD_DM = intern(L"ADD-DM");
+	P = intern(L"P");
+	GOAL_FOCUS = intern(L"GOAL-FOCUS");
+	RIGHT_ARROW = intern(L"==>");
 	BUFFER_TEST = intern(L"BUFFER-TEST");
+	MOD_BUFFER_CHUNK = intern(L"MOD-BUFFER-CHUNK");
+	MODULE_REQUEST = intern(L"MODULE-REQUEST");
+	CLEAR_BUFFER = intern(L"CLEAR-BUFFER");
+	BANG_OUTPUT = intern(L"!OUTPUT!");
 
 	isactr_model_init();
 	init_lisp_actr();
@@ -163,6 +180,24 @@ static void event_action_null(isactr_event* evt)
 		model.time, "-no action specified-");
 }
 
+static void event_action_retrieved(isactr_event* evt)
+{
+	LISPTR chunkName = intern(L"D");		// TODO: unfake!
+
+	fprintf(model.out, "     %5.3f   %-22ls %s %ls\n",
+		model.time, L"DECLARATIVE", "RETRIEVED-CHUNK", string_text(symbol_name(chunkName)));
+}
+
+static void event_action_start_retrieval(isactr_event* evt)
+{
+	// buffer is understood to be RETRIEVAL
+	// 'chunk' is the pattern for the chunk to be retrieved
+	LISPTR pattern = evt->chunk;
+	fprintf(model.out, "     %5.3f   %-22ls %s\n",
+		model.time, L"DECLARATIVE", "START-RETRIEVAL");
+	evt = isactr_push_event_at_time(model.time+0.050, event_action_retrieved);
+}
+
 static void event_action_fire_production(isactr_event* evt)
 {
 	LISPTR p = evt->chunk;		// the production that fired
@@ -185,7 +220,7 @@ static LISPTR modify_chunk(LISPTR chunk, LISPTR slotName, LISPTR value)
 	return cons(slotName, cons(value, NIL));
 } // modify_chunk
 
-static bool buffer_modification(LISPTR action)
+static bool action_buffer_modification(LISPTR action)
 {
 	LISPTR buffer = car(action); action = cdr(action);
 	LISPTR* pbuffer = NULL;
@@ -215,13 +250,58 @@ static bool buffer_modification(LISPTR action)
 	return true;
 }
 
+static bool action_clear_buffer(LISPTR action)
+{
+	LISPTR buffer = car(action);
+	if (buffer == GOAL) {
+		model.goal = NIL;
+	} else if (buffer == RETRIEVAL) {
+		model.retrieval = NIL;
+	} else {
+		fprintf(model.err, "unknown buffer (%ls) in RHS action", string_text(symbol_name(buffer)));
+		return false;
+	}
+	fprintf(model.out, "     %5.3f   %-22ls %s %ls\n",
+		model.time, L"PROCEDURAL", "CLEAR-BUFFER", string_text(symbol_name(buffer)));
+	return true;
+}
+
+static bool action_module_request(LISPTR action)
+{
+	LISPTR buffer = car(action);
+	fprintf(model.out, "     %5.3f   %-22ls %s %ls\n",
+		model.time, L"PROCEDURAL", "MODULE-REQUEST", string_text(symbol_name(buffer)));
+	isactr_event* evt = isactr_push_event_at_time(model.time, event_action_start_retrieval);
+	evt->chunk = cdr(action);
+	action_clear_buffer(action);
+	return true;
+}
+
+static bool action_output(LISPTR action)
+{
+	LISPTR value = car(action);
+	if (consp(value)) {
+		value = cdr(value);
+	}
+	lisp_print(value, model.out);
+	fprintf(model.out, "\n");
+	return true;
+}
+
 bool apply_action(LISPTR action)
 {
 	LISPTR op = car(action);
 	action = cdr(action);
-	if (op == BUFFER_TEST) {
-		// technically, a buffer modification
-		return buffer_modification(action);
+	if (op == MOD_BUFFER_CHUNK) {
+		// =buffer> { slot value }*
+		// modify contents of a buffer
+		return action_buffer_modification(action);
+	} else if (op == MODULE_REQUEST) {
+		return action_module_request(action);
+	} else if (op == CLEAR_BUFFER) {
+		return action_clear_buffer(action);
+	} else if (op == BANG_OUTPUT) {
+		return action_output(action);
 	}
 	fprintf(model.err, "invalid RHS action type: %ls\n", string_text(symbol_name(op)));
 	return false;

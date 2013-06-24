@@ -6,6 +6,14 @@
 const float MAX_PRIORITY = (float)(-log(0.0));
 const float MIN_PRIORITY = (float)log(0.0);
 
+extern LISPTR GOAL, RETRIEVAL;
+extern LISPTR SGP, CHUNK_TYPE, ADD_DM, P, GOAL_FOCUS, RIGHT_ARROW;
+extern LISPTR BUFFER_TEST;
+extern LISPTR MOD_BUFFER_CHUNK;
+extern LISPTR MODULE_REQUEST;
+extern LISPTR CLEAR_BUFFER;
+extern LISPTR BANG_OUTPUT;
+
 void isactr_model_init(void);
 void isactr_model_release(void);
 bool isactr_model_load(FILE* in, FILE* out, FILE* err);

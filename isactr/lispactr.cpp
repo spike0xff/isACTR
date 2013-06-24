@@ -4,9 +4,6 @@
 #include <assert.h>
 #include <string.h>
 
-static LISPTR SGP, CHUNK_TYPE, ADD_DM, P, GOAL_FOCUS, RIGHT_ARROW;
-static LISPTR BUFFER_TEST;
-
 LISPTR clear_all(void)
 {
 	return NIL;
@@ -35,6 +32,15 @@ LISPTR add_dm(LISPTR args)
 	return ADD_DM;
 }
 
+static unsigned first_char(LISPTR x)
+{
+	if (symbolp(x)) {
+		const wchar_t* name = string_text(symbol_name(x));
+		return name[0];
+	}
+	return 0;
+}
+
 static bool is_bufspec(LISPTR x)
 {
 	// It's a buffer-spec if it's a symbol whose last char is '>'
@@ -44,6 +50,20 @@ static bool is_bufspec(LISPTR x)
 	}
 	return false;
 }
+
+// true iff x is the kind of symbol that starts
+// a 'clause' (condition or action) in the LHS or RHS of a production
+// That is, either a buffer-spec like =goal> or +retrieval>
+// or a thing like !stop! or !output!
+static bool is_clause_start(LISPTR x)
+{
+	// It's a buffer-spec if it's a symbol whose last char is '>'
+	if (symbolp(x)) {
+		const wchar_t* name = string_text(symbol_name(x));
+		return name[wcslen(name)-1] == '>' || name[0]=='!';
+	}
+	return false;
+} // is_clause_start
 
 static bool is_variable(LISPTR x)
 {
@@ -57,7 +77,7 @@ static LISPTR copy_test(LISPTR p, LISPTR* pvars)
 		return p;
 	}
 	LISPTR item = car(p);
-	if (!is_bufspec(item)) {
+	if (!is_clause_start(item)) {
 		if (is_variable(item)) {
 			LISPTR binding = assoc(item, *pvars);
 			if (binding==NIL) {
@@ -83,12 +103,12 @@ static LISPTR extract_buffer_name(LISPTR sym)
 	return intern(bufname+1);
 } // extract_buffer_name
 
-static bool parse_clause(LISPTR* pp, LISPTR* ptest, LISPTR* pvars)
+static bool parse_condition(LISPTR* pp, LISPTR* pcond, LISPTR* pvars)
 {
 	LISPTR p = *pp;
 	if (consp(p)) {
 		if (is_bufspec(car(p))) {
-			*ptest = cons(BUFFER_TEST, cons(extract_buffer_name(car(p)), copy_test(cdr(p), pvars)));
+			*pcond = cons(BUFFER_TEST, cons(extract_buffer_name(car(p)), copy_test(cdr(p), pvars)));
 			p = cdr(p);
 			while (consp(p) && !is_bufspec(car(p))) {
 				p = cdr(p);
@@ -99,17 +119,42 @@ static bool parse_clause(LISPTR* pp, LISPTR* ptest, LISPTR* pvars)
 		}
 	}
 	return false;
-} // parse_clause
-
-static bool parse_condition(LISPTR* pp, LISPTR* pcond, LISPTR* pvars)
-{
-	return parse_clause(pp, pcond, pvars);
 }
 
 static bool parse_action(LISPTR* pp, LISPTR* pact, LISPTR* pvars)
 {
-	return parse_clause(pp, pact, pvars);
-}
+	LISPTR p = *pp;
+	if (!consp(p) || !is_clause_start(car(p))) {
+		lisp_error(L"unrecognized action in production RHS");
+		return false;
+	}
+	switch (first_char(car(p))) {
+	case '=':
+		*pact = cons(MOD_BUFFER_CHUNK, cons(extract_buffer_name(car(p)), copy_test(cdr(p), pvars)));
+		break;
+	case '+':
+		// request ::= +buffer-name> [direct-value | isa chunk-type request-spec*]
+		*pact = cons(MODULE_REQUEST, cons(extract_buffer_name(car(p)), copy_test(cdr(p), pvars)));
+		break;
+	case '-':
+		// buffer-clearing ::= -buffer-name>
+		*pact = cons(CLEAR_BUFFER, cons(extract_buffer_name(car(p)), NIL));
+		break;
+	case '!':
+		*pact = cons(car(p), copy_test(cdr(p), pvars));
+		break;
+	default:
+		lisp_error(L"unrecognized action in production RHS");
+		return false;
+	} // switch
+	p = cdr(p);
+	while (consp(p) && !is_clause_start(car(p))) {
+		p = cdr(p);
+	}
+	assert(p==NIL || is_clause_start(car(p)));
+	*pp = p;
+	return true;
+} // parse_action
 
 static bool parse_production(LISPTR p, LISPTR* plhs, LISPTR* prhs, LISPTR* pvars)
 {
@@ -224,13 +269,6 @@ LISPTR subr_run(LISPTR duration)
 
 void init_lisp_actr(void)
 {
-	SGP = intern(L"SGP");
-	CHUNK_TYPE = intern(L"CHUNK-TYPE");
-	ADD_DM = intern(L"ADD-DM");
-	P = intern(L"P");
-	GOAL_FOCUS = intern(L"GOAL-FOCUS");
-	RIGHT_ARROW = intern(L"==>");
-	BUFFER_TEST = intern(L"BUFFER-TEST");
 	def_fsubr(L"DEFINE-MODEL", define_model);
 	def_subr0(L"CLEAR-ALL", clear_all);
 	def_subr1(L"RUN", subr_run);
