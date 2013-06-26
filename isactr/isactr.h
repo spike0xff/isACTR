@@ -3,8 +3,13 @@
 
 #include <math.h>		// for log
 
-const float MAX_PRIORITY = (float)(-log(0.0));
-const float MIN_PRIORITY = (float)log(0.0);
+const float PRIORITY_MAX = (float)(-log(0.0));
+const float PRIORITY_MIN = (float)log(0.0);
+#define PRIORITY_0		  0
+#define PRIORITY_10		 10
+#define PRIORITY_50		 50
+#define PRIORITY_90		 90
+#define PRIORITY_100	100
 
 extern LISPTR GOAL, RETRIEVAL;
 extern LISPTR SGP, CHUNK_TYPE, ADD_DM, P, GOAL_FOCUS, RIGHT_ARROW;
@@ -13,6 +18,7 @@ extern LISPTR MOD_BUFFER_CHUNK;
 extern LISPTR MODULE_REQUEST;
 extern LISPTR CLEAR_BUFFER;
 extern LISPTR BANG_OUTPUT;
+extern LISPTR BANG_EVAL;
 
 void isactr_model_init(void);
 void isactr_model_release(void);
@@ -27,6 +33,9 @@ void isactr_add_dm(LISPTR chunk);
 
 // find and return the chunk in DM with the given name
 LISPTR isactr_get_chunk(LISPTR chunk_name);
+
+// retrieve chunk matching pattern from DM
+LISPTR isactr_retrieve_chunk(LISPTR pattern);
 
 // Add a production to PM, lhs ==> rhs.
 // lhs and rhs are lists of clauses of the form

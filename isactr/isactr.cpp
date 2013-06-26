@@ -45,8 +45,14 @@ typedef struct _isactr_event {
 	LISPTR					chunk;			// chunk, if any
 } isactr_event;
 
+typedef enum {
+	BUFFER_FREE,
+	BUFFER_BUSY,
+	BUFFER_ERROR
+} BufferState;
 
 typedef struct _isactr_model {
+	bool			running;
 	FILE*			in;
 	FILE*			out;
 	FILE*			err;
@@ -59,6 +65,7 @@ typedef struct _isactr_model {
 	// state
 	LISPTR			goal;				// contents of GOAL buffer
 	LISPTR			retrieval;			// contents of RETRIEVAL buffer
+	BufferState		retrievalState;
 } isactr_model;
 
 ///////////////////////////////////////////////////////////////////////
@@ -72,11 +79,12 @@ LISPTR MOD_BUFFER_CHUNK;
 LISPTR MODULE_REQUEST;
 LISPTR CLEAR_BUFFER;
 LISPTR BANG_OUTPUT;
+LISPTR BANG_EVAL;
 
 ///////////////////////////////////////////////////////////////////////
 // forward function declarations
 void isactr_process_stream(FILE* in, FILE* out, FILE* err);
-isactr_event* isactr_push_event_at_time(double t, isactr_event_action action);
+isactr_event* isactr_schedule_event(double t, double priority, isactr_event_action action);
 void isactr_clear_event_queue(void);
 static void event_action_conflict_resolution(isactr_event* evt);
 void isactr_fire_production(LISPTR p);
@@ -120,6 +128,7 @@ int main(int argc, char* argv[])
 	MODULE_REQUEST = intern(L"MODULE-REQUEST");
 	CLEAR_BUFFER = intern(L"CLEAR-BUFFER");
 	BANG_OUTPUT = intern(L"!OUTPUT!");
+	BANG_EVAL = intern(L"!EVAL!");
 
 	isactr_model_init();
 	init_lisp_actr();
@@ -160,52 +169,91 @@ void isactr_push_event(isactr_event* evt)
 	*p = evt;
 } // isactr_push_event
 
-static void event_action_end(isactr_event* evt)
-{
-	isactr_clear_event_queue();
-	fprintf(model.out, "     %5.3f   ------                 %s\n",
-		model.time, "Stopped because no events left to process");
-} // event_action_end
-
-static void event_action_timeout(isactr_event* evt)
-{
-	isactr_clear_event_queue();
-	fprintf(model.out, "     %5.3f   ------                 %s\n",
-		model.time, "Stopped because time limit reached");
-} // event_action_timeout
-
 static void event_action_null(isactr_event* evt)
 {
 	fprintf(model.out, "     %5.3f   ------                 %s\n",
 		model.time, "-no action specified-");
 }
 
+static void event_action_retrieval_failure(isactr_event* evt)
+{
+	fprintf(model.out, "     %5.3f   %-22ls %s\n",
+		model.time, L"DECLARATIVE", "RETRIEVAL-FAILURE");
+	model.retrievalState = BUFFER_ERROR;
+}
+
+// evt->buffer is buffer, evt->chunk is name of DM chunk
+static void event_action_set_buffer_chunk(isactr_event* evt)
+{
+	LISPTR chunkName = evt->chunk;
+	LISPTR chunk = isactr_get_chunk(chunkName);
+	if (chunk==NIL) {
+		lisp_error(L"set_buffer_chunk: named chunk not found");
+		return;
+	}
+	chunk = cdr(chunk);					// don't include chunk-name in buffer
+
+	LISPTR buffer = evt->buffer;
+	const wchar_t* area = L"<buffer?>";
+	if (buffer == GOAL) {
+		model.goal = chunk;
+		area = L"GOAL";
+	} else if (buffer == RETRIEVAL) {
+		model.retrieval = chunk;
+		area = L"DECLARATIVE";
+	}
+
+	fprintf(model.out, "     %5.3f   %-22ls %s %ls %ls REQUESTED %s\n",
+		model.time, area, "SET-BUFFER-CHUNK",
+		string_text(symbol_name(evt->buffer)), string_text(symbol_name(chunkName)), "NIL");
+
+	isactr_schedule_event(0, PRIORITY_MIN, event_action_conflict_resolution);
+
+	printf("--goal:      "); lisp_print(model.goal, stdout); printf("\n");
+	printf("--retrieval: "); lisp_print(model.retrieval, stdout); printf("\n");
+} // event_action_set_buffer_chunk
+
+
 static void event_action_retrieved(isactr_event* evt)
 {
-	LISPTR chunkName = intern(L"D");		// TODO: unfake!
+	LISPTR chunk = evt->chunk;				// includes car=name
+	LISPTR chunkName = car(evt->chunk);
 
 	fprintf(model.out, "     %5.3f   %-22ls %s %ls\n",
 		model.time, L"DECLARATIVE", "RETRIEVED-CHUNK", string_text(symbol_name(chunkName)));
+	model.retrievalState = BUFFER_FREE;
+	isactr_event* evt2 = isactr_schedule_event(model.time, PRIORITY_MAX, event_action_set_buffer_chunk);
+	evt2->buffer = RETRIEVAL;
+	evt2->chunk = evt->chunk;
 }
 
 static void event_action_start_retrieval(isactr_event* evt)
 {
 	// buffer is understood to be RETRIEVAL
 	// 'chunk' is the pattern for the chunk to be retrieved
+	model.retrievalState = BUFFER_BUSY;
 	LISPTR pattern = evt->chunk;
 	fprintf(model.out, "     %5.3f   %-22ls %s\n",
 		model.time, L"DECLARATIVE", "START-RETRIEVAL");
-	evt = isactr_push_event_at_time(model.time+0.050, event_action_retrieved);
+	LISPTR chunk = isactr_retrieve_chunk(pattern);
+	// Note, includes name = car(chunk)
+	if (chunk == NIL) {
+		// retrieval failed
+		evt = isactr_schedule_event(model.time+0.050, PRIORITY_0, event_action_retrieval_failure);
+	} else {
+		evt = isactr_schedule_event(model.time+0.050, PRIORITY_0, event_action_retrieved);
+		evt->chunk = chunk;
+	}
 }
 
-static void event_action_fire_production(isactr_event* evt)
+static void event_action_production_fired(isactr_event* evt)
 {
 	LISPTR p = evt->chunk;		// the production that fired
 	LISPTR pname = car(p);
 	fprintf(model.out, "     %5.3f   %-22ls %s %ls\n",
 		model.time, L"PROCEDURAL", "PRODUCTION-FIRED", string_text(symbol_name(pname)));
 	isactr_fire_production(p);
-	evt = isactr_push_event_at_time(model.time, event_action_conflict_resolution);
+	evt = isactr_schedule_event(model.time, PRIORITY_MIN, event_action_conflict_resolution);
 }
 
 static LISPTR modify_chunk(LISPTR chunk, LISPTR slotName, LISPTR value)
@@ -250,30 +298,45 @@ static bool action_buffer_modification(LISPTR action)
 	return true;
 }
 
-static bool action_clear_buffer(LISPTR action)
+static void event_action_clear_buffer(isactr_event* evt)
 {
-	LISPTR buffer = car(action);
+	LISPTR buffer = evt->buffer;
+	fprintf(model.out, "     %5.3f   %-22ls %s %ls\n",
+		model.time, L"PROCEDURAL", "CLEAR-BUFFER", string_text(symbol_name(buffer)));
 	if (buffer == GOAL) {
 		model.goal = NIL;
 	} else if (buffer == RETRIEVAL) {
 		model.retrieval = NIL;
-	} else {
-		fprintf(model.err, "unknown buffer (%ls) in RHS action", string_text(symbol_name(buffer)));
-		return false;
 	}
-	fprintf(model.out, "     %5.3f   %-22ls %s %ls\n",
-		model.time, L"PROCEDURAL", "CLEAR-BUFFER", string_text(symbol_name(buffer)));
+}
+
+static bool action_clear_buffer(LISPTR action)
+{
+	isactr_event* evt = isactr_schedule_event(model.time, PRIORITY_10, event_action_clear_buffer);
+	evt->buffer = car(action);
 	return true;
+}
+
+static void event_action_module_request(isactr_event* evt)
+{
+	LISPTR buffer = evt->buffer;
+	fprintf(model.out, "     %5.3f   %-22ls %s %ls\n",
+		model.time, L"PROCEDURAL", "MODULE-REQUEST", string_text(symbol_name(buffer)));
+
+	if (buffer==RETRIEVAL) {
+		isactr_event* evt2 = isactr_schedule_event(model.time, -2000, event_action_start_retrieval);
+		evt2->chunk = evt->chunk;
+	}
 }
 
 static bool action_module_request(LISPTR action)
 {
 	LISPTR buffer = car(action);
-	fprintf(model.out, "     %5.3f   %-22ls %s %ls\n",
-		model.time, L"PROCEDURAL", "MODULE-REQUEST", string_text(symbol_name(buffer)));
-	isactr_event* evt = isactr_push_event_at_time(model.time, event_action_start_retrieval);
+	isactr_event* evt = isactr_schedule_event(model.time, PRIORITY_50, event_action_module_request);
+	evt->buffer = buffer;
 	evt->chunk = cdr(action);
-	action_clear_buffer(action);
+
+	isactr_schedule_event(model.time, PRIORITY_10, event_action_clear_buffer)->buffer = buffer;
 	return true;
 }
 
@@ -286,6 +349,12 @@ static bool action_output(LISPTR action)
 	lisp_print(value, model.out);
 	fprintf(model.out, "\n");
 	return true;
+}
+
+static bool action_eval(LISPTR action)
+{
+	fprintf(model.out, "** !eval! not implemented\n");
+	return false;
 }
 
 bool apply_action(LISPTR action)
@@ -301,7 +370,10 @@ bool apply_action(LISPTR action)
 	} else if (op == CLEAR_BUFFER) {
 		return action_clear_buffer(action);
 	} else if (op == BANG_OUTPUT) {
+		// takes place immediately (during production-fired event)
 		return action_output(action);
+	} else if (op == BANG_EVAL) {
+		return action_eval(action);
 	}
 	fprintf(model.err, "invalid RHS action type: %ls\n", string_text(symbol_name(op)));
 	return false;
@@ -416,16 +488,18 @@ static bool is_ready_to_fire(LISPTR p)
 } // is_ready_to_fire
 
 
+static void event_action_production_selected(isactr_event* evt)
+{
+	LISPTR pname = car(evt->chunk);
+	fprintf(model.out, "     %5.3f   %-22ls %s %ls\n",
+		model.time, L"PROCEDURAL", "PRODUCTION-SELECTED", string_text(symbol_name(pname)));
+	isactr_event* evt2 = isactr_schedule_event(model.time+0.05, PRIORITY_0, event_action_production_fired);
+	evt2->chunk = evt->chunk;
+}
+
 static void schedule_firing(LISPTR p)
 {
-	LISPTR pname = car(p);
-	const wchar_t* pname_str = L"<bad>";
-	if (symbolp(pname)) {
-		pname_str = string_text(symbol_name(pname));
-	}
-	fprintf(model.out, "     %5.3f   %-22ls %s %ls\n",
-		model.time, L"PROCEDURAL", "PRODUCTION-SELECTED", pname_str);
-	isactr_event* evt = isactr_push_event_at_time(model.time+0.05, event_action_fire_production);
+	isactr_event* evt = isactr_schedule_event(model.time, PRIORITY_MAX, event_action_production_selected);
 	evt->chunk = p;
 }
 
@@ -443,44 +517,14 @@ static void event_action_conflict_resolution(isactr_event* evt)
 		}
 		plist = cdr(plist);
 	}
-	// if no production ready to fire, schedule the 'stop' event at the front of the queue
-	isactr_push_event_at_time(model.time, event_action_end)->priority = MAX_PRIORITY;
 }
-
-static void event_action_set_buffer_chunk(isactr_event* evt)
-{
-	const wchar_t* chunk_str = L"<bad>";
-	if (symbolp(evt->chunk)) {
-		chunk_str = string_text(symbol_name(evt->chunk));
-	}
-	LISPTR chunk = isactr_get_chunk(evt->chunk);
-	if (chunk==NIL) {
-		lisp_error(L"set_buffer_chunk: named chunk not found");
-	} else {
-		chunk = cdr(chunk);					// don't include chunk-name in buffer
-		const char* area = "<buffer?>";
-		if (evt->buffer == GOAL) {
-			model.goal = chunk;
-			area = "GOAL";
-		} else if (evt->buffer == RETRIEVAL) {
-			model.retrieval = chunk;
-			area = "DECLARATIVE";
-		}
-
-		fprintf(model.out, "     %5.3f   %-22s %s %ls %ls REQUESTED %s\n",
-			model.time, area, "SET-BUFFER-CHUNK", string_text(symbol_name(evt->buffer)), chunk_str, "NIL");
-	}
-	printf("--goal:      "); lisp_print(model.goal, stdout); printf("\n");
-	printf("--retrieval: "); lisp_print(model.retrieval, stdout); printf("\n");
-} // event_action_set_buffer_chunk
-
 
 // Create and enqueue an event at future time t with action act.
 // If successful, returns a pointer to the enqueued event.
 // Otherwise returns NULL after reporting error to 'err'.
 // Causes of failure:
 //	insufficient memory
-isactr_event* isactr_push_event_at_time(double t, isactr_event_action act)
+isactr_event* isactr_schedule_event(double t, double priority, isactr_event_action act)
 {
 	assert(t >= model.time);
 	assert(act != NULL);
@@ -490,14 +534,18 @@ isactr_event* isactr_push_event_at_time(double t, isactr_event_action act)
 	if (evt) {
 		evt->time = (float)t;
 		evt->action = act;
+		evt->priority = priority;
+		evt->buffer = NIL;
+		evt->chunk = NIL;
+		evt->requested = false;
 		// sort new event into the model's event queue
 		isactr_push_event(evt);
 	} else {
-		fprintf(model.err, "out of memory in isactr_push_event_at_time(t=%1.3f)\n", t);
+		fprintf(model.err, "out of memory in isactr_schedule_event(t=%1.3f)\n", t);
 	}
 	// return the newly created event for possible further customization by caller:
 	return evt;
-} // isactr_push_event_at_time
+} // isactr_schedule_event
 
 void isactr_release_event(isactr_event* evt)
 {
@@ -518,22 +566,29 @@ isactr_event* isactr_dequeue_next_event(isactr_model* model)
 	return evt;
 }
 
-bool isactr_do_next_event(isactr_model* model)
+bool isactr_do_next_event(void)
 {
 	isactr_event* evt;
-	if ((evt = isactr_dequeue_next_event(model))) {
-		model->time = evt->time;				// 'now' is the time of this event
-		evt->action(evt);						// 'do' the event
-		isactr_release_event(evt);
-		return true;
-	} else {
+	if (!(evt = isactr_dequeue_next_event(&model))) {
+		fprintf(model.out, "     %5.3f   ------                 %s\n",
+			model.time, "Stopped because no events left to process");
+		return false;							// event queue empty
+	}
+	if (evt->time > model.timeLimit) {
+		fprintf(model.out, "     %5.3f   ------                 %s\n",
+			model.time, "Stopped because time limit reached");
 		return false;
 	}
+	model.time = evt->time;				// 'now' is the time of this event
+	evt->action(evt);						// 'do' the event
+	isactr_release_event(evt);
+	return true;
 }
 
 void isactr_model_init(void)
 {
 	memset(&model, 0, sizeof model);
+	model.running = false;
 	model.time = 0.0;
 	model.timeLimit = INFINITY;
 	model.nextEvent = NULL;
@@ -574,16 +629,12 @@ bool isactr_model_load(FILE* in, FILE* out, FILE* err)
 void isactr_model_run(double dDur)
 {
 	model.timeLimit = dDur;
-	isactr_event* evt;
 
-	evt = isactr_push_event_at_time(0, event_action_conflict_resolution);
+	isactr_schedule_event(0, PRIORITY_MIN, event_action_conflict_resolution);
 
-	evt = isactr_push_event_at_time(model.timeLimit, event_action_timeout);
-	// do this last at that time:
-	evt->priority = MIN_PRIORITY;
-
-	while (isactr_do_next_event(&model)) {
+	while (isactr_do_next_event()) {
 	}
+	isactr_clear_event_queue();
 	fprintf(model.out, "%0.1f\n47\n", model.time);
 }
 
@@ -617,6 +668,58 @@ LISPTR isactr_get_chunk(LISPTR chunk_name)
 	return NIL;
 }
 
+static bool chunk_matches_key(LISPTR chunk, LISPTR key)
+{
+	chunk = cdr(chunk);		// skip over chunk-name
+	while (consp(key) && consp(chunk)) {
+		LISPTR slot = car(key);
+		LISPTR value = cadr(key);
+		if (consp(value)) {
+			value = cdr(value);
+		}
+		// search the chunk for matching slot
+		LISPTR c = chunk;
+		while (consp(c)) {
+			if (car(c) == slot) {
+				if (!eql(cadr(c), value)) {
+					return false;			// value mismatch, fail
+				}
+				break;						// value match, continue with key
+			}
+			c = cddr(c);
+		}
+		if (c == NIL) {
+			// key-slot not found in chunk
+			return false;
+		}
+		// we just found the leading (slot value) of key, in chunk
+		if (slot == car(chunk)) {
+			// if we just matched the leading slot of the chunk
+			// only search the tail from now on:
+			chunk = cddr(chunk);
+		}
+		// continue with rest of key
+		key = cddr(key);
+	}
+	// true if found everything in key, false otherwise:
+	return (key == NIL);
+}
+
+// note, returned list includes name in CAR
+LISPTR isactr_retrieve_chunk(LISPTR key)
+{
+	LISPTR dm = model.dm;
+	while (consp(dm)) {
+		LISPTR chunk = car(dm); dm = cdr(dm);
+		printf("  match chunk:"); lisp_print(chunk, stdout); printf(" key:"); lisp_print(key, stdout);
+		if (chunk_matches_key(chunk, key)) {
+			printf(" => true!\n");
+			return chunk;
+		}
+		printf(" => false\n");
+	}
+	return NIL;
+} // isactr_retrieve_chunk
 
 // Add a production lhs ==> rhs with specified name, to production memory.
 // where <lhs> and <rhs> are lists of 'clauses' of the form:
@@ -637,14 +740,9 @@ void isactr_add_production(LISPTR name, LISPTR lhs, LISPTR rhs, LISPTR vars)
 
 void isactr_set_goal_focus(LISPTR chunk_name)
 {
-	isactr_event* evt = (isactr_event*)malloc(sizeof isactr_event);
-	evt->time = model.time;				// i.e. 'now'
-	evt->priority = MAX_PRIORITY;		// do this first at that time
-	evt->requested = false;
+	isactr_event* evt = isactr_schedule_event(model.time, PRIORITY_MAX, event_action_set_buffer_chunk);
 	evt->buffer = intern(L"GOAL");
 	evt->chunk = chunk_name;
-	evt->action = event_action_set_buffer_chunk;
-
-	isactr_push_event(evt);
+	evt->requested = false;
 } // fn_goal_focus
 
