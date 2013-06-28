@@ -175,6 +175,13 @@ static void event_action_null(isactr_event* evt)
 		model.time, "-no action specified-");
 }
 
+static void event_action_buffer_read_action(isactr_event* evt)
+{
+	LISPTR buffer = evt->buffer;
+	fprintf(model.out, "     %5.3f   %-22ls %s %ls\n",
+		model.time, L"PROCEDURAL", "BUFFER-READ-ACTION", string_text(symbol_name(buffer)));
+}
+
 static void event_action_retrieval_failure(isactr_event* evt)
 {
 	fprintf(model.out, "     %5.3f   %-22ls %s\n",
@@ -182,17 +189,18 @@ static void event_action_retrieval_failure(isactr_event* evt)
 	model.retrievalState = BUFFER_ERROR;
 }
 
-// evt->buffer is buffer, evt->chunk is name of DM chunk
+// evt->buffer is buffer, evt->chunk = full chunk, car=name
 static void event_action_set_buffer_chunk(isactr_event* evt)
 {
-	LISPTR chunkName = evt->chunk;
-	LISPTR chunk = isactr_get_chunk(chunkName);
-	if (chunk==NIL) {
-		lisp_error(L"set_buffer_chunk: named chunk not found");
+	LISPTR chunk = evt->chunk;
+	if (!consp(chunk)) {
+		lisp_error(L"set_buffer_chunk: bad chunk");
 		return;
 	}
+	LISPTR chunkName = car(evt->chunk);
 	chunk = cdr(chunk);					// don't include chunk-name in buffer
 
+	// put the chunk in the designated buffer
 	LISPTR buffer = evt->buffer;
 	const wchar_t* area = L"<buffer?>";
 	if (buffer == GOAL) {
@@ -207,7 +215,7 @@ static void event_action_set_buffer_chunk(isactr_event* evt)
 		model.time, area, "SET-BUFFER-CHUNK",
 		string_text(symbol_name(evt->buffer)), string_text(symbol_name(chunkName)), "NIL");
 
-	isactr_schedule_event(0, PRIORITY_MIN, event_action_conflict_resolution);
+	isactr_schedule_event(model.time, PRIORITY_MIN, event_action_conflict_resolution);
 
 	printf("--goal:      "); lisp_print(model.goal, stdout); printf("\n");
 	printf("--retrieval: "); lisp_print(model.retrieval, stdout); printf("\n");
@@ -271,6 +279,8 @@ static LISPTR modify_chunk(LISPTR chunk, LISPTR slotName, LISPTR value)
 static bool action_buffer_modification(LISPTR action)
 {
 	LISPTR buffer = car(action); action = cdr(action);
+	fprintf(model.out, "     %5.3f   %-22ls %s %ls\n",
+		model.time, L"PROCEDURAL", "MOD-BUFFER-CHUNK", string_text(symbol_name(buffer)));
 	LISPTR* pbuffer = NULL;
 	if (buffer == GOAL) {
 		pbuffer = &model.goal;
@@ -280,8 +290,6 @@ static bool action_buffer_modification(LISPTR action)
 		fprintf(model.err, "unknown buffer (%ls) in RHS action", string_text(symbol_name(buffer)));
 		return false;
 	}
-	fprintf(model.out, "     %5.3f   %-22ls %s %ls\n",
-		model.time, L"PROCEDURAL", "BUFFER-READ-ACTION", string_text(symbol_name(buffer)));
 	while (consp(action)) {
 		LISPTR slotName = car(action);
 		LISPTR value = cadr(action);
@@ -291,8 +299,6 @@ static bool action_buffer_modification(LISPTR action)
 		*pbuffer = modify_chunk(*pbuffer, slotName, value);
 		action = cddr(action);
 	}
-	fprintf(model.out, "     %5.3f   %-22ls %s %ls\n",
-		model.time, L"PROCEDURAL", "MOD-BUFFER-CHUNK", string_text(symbol_name(buffer)));
 	printf("--goal:      "); lisp_print(model.goal, stdout); printf("\n");
 	printf("--retrieval: "); lisp_print(model.retrieval, stdout); printf("\n");
 	return true;
@@ -493,6 +499,20 @@ static void event_action_production_selected(isactr_event* evt)
 	LISPTR pname = car(evt->chunk);
 	fprintf(model.out, "     %5.3f   %-22ls %s %ls\n",
 		model.time, L"PROCEDURAL", "PRODUCTION-SELECTED", string_text(symbol_name(pname)));
+
+	// queue up events for reading, querying or searching buffers in the LHS
+	LISPTR lhs = cadr(evt->chunk);
+	while (consp(lhs)) {
+		LISPTR condition = car(lhs);
+		LISPTR op = car(condition);
+		if (op == BUFFER_TEST) {
+			isactr_event* evt = isactr_schedule_event(model.time, PRIORITY_0, event_action_buffer_read_action);
+			evt->buffer = cadr(condition);
+		}
+		lhs = cdr(lhs);
+	} // while
+
+	// followed (later) by the firing event
 	isactr_event* evt2 = isactr_schedule_event(model.time+0.05, PRIORITY_0, event_action_production_fired);
 	evt2->chunk = evt->chunk;
 }
@@ -630,8 +650,6 @@ void isactr_model_run(double dDur)
 {
 	model.timeLimit = dDur;
 
-	isactr_schedule_event(0, PRIORITY_MIN, event_action_conflict_resolution);
-
 	while (isactr_do_next_event()) {
 	}
 	isactr_clear_event_queue();
@@ -742,7 +760,7 @@ void isactr_set_goal_focus(LISPTR chunk_name)
 {
 	isactr_event* evt = isactr_schedule_event(model.time, PRIORITY_MAX, event_action_set_buffer_chunk);
 	evt->buffer = intern(L"GOAL");
-	evt->chunk = chunk_name;
+	evt->chunk = isactr_get_chunk(chunk_name);
 	evt->requested = false;
 } // fn_goal_focus
 

@@ -3,10 +3,11 @@
 
 #define VERSION_MAJOR 0
 #define VERSION_MINOR 0
-#define VERSION_RELEASE 10
+#define VERSION_RELEASE 11
 #define VERSION_BUILD 0
 
 /*
+0.0.11.0	2013.06.27	spike	getting the basic LHS/RHS events in the queue, and in the right order.
 0.0.10.0	2013.06.23	spike	parse !output!
 0.0.9.0		2013.06.22	spike	minimal LHS matching working
 0.0.8.0		2013.06.22	spike	partial parsing and matching of productions
