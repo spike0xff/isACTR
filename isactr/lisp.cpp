@@ -235,6 +235,18 @@ LISPTR caddr(LISPTR x)
 	return NIL;
 } // caddr
 
+LISPTR cadddr(LISPTR x)
+{
+	if (consp(x)) {
+		return caddr(((CELL*)x)->cdr);
+	}
+	if (x != NIL) {
+		lisp_error(L"bad arg to caddr");
+	}
+	return NIL;
+} // cadddr
+
+
 LISPTR defvar(LISPTR x, LISPTR y)
 {
 	if (symbolp(x)) {

@@ -31,6 +31,7 @@ LISPTR cdr(LISPTR x);
 LISPTR cadr(LISPTR x);
 LISPTR cddr(LISPTR x);
 LISPTR caddr(LISPTR x);
+LISPTR cadddr(LISPTR x);
 LISPTR assoc(LISPTR item, LISPTR alist);
 LISPTR defvar(LISPTR x, LISPTR y);
 bool consp(LISPTR x);

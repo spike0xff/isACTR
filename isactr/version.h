@@ -3,10 +3,12 @@
 
 #define VERSION_MAJOR 0
 #define VERSION_MINOR 0
-#define VERSION_RELEASE 11
+#define VERSION_RELEASE 13
 #define VERSION_BUILD 0
 
 /*
+0.0.13.0	2013.06.30	spike	!output! working well, count.lisp runs 100%, event order still not exactly right.
+0.0.12.0	2013.06.29	spike	parse buffer queries (?buffer> on LHS)
 0.0.11.0	2013.06.27	spike	getting the basic LHS/RHS events in the queue, and in the right order.
 0.0.10.0	2013.06.23	spike	parse !output!
 0.0.9.0		2013.06.22	spike	minimal LHS matching working

@@ -13,17 +13,22 @@ const float PRIORITY_MIN = (float)log(0.0);
 
 extern LISPTR GOAL, RETRIEVAL;
 extern LISPTR SGP, CHUNK_TYPE, ADD_DM, P, GOAL_FOCUS, RIGHT_ARROW;
+extern LISPTR EQUALS, MINUS, NOT, LT, LEQ, GT, GEQ;
 extern LISPTR BUFFER_TEST;
+extern LISPTR BUFFER_QUERY;
 extern LISPTR MOD_BUFFER_CHUNK;
 extern LISPTR MODULE_REQUEST;
 extern LISPTR CLEAR_BUFFER;
 extern LISPTR BANG_OUTPUT;
-extern LISPTR BANG_EVAL;
+extern LISPTR BANG_EVAL, BANG_SAFE_EVAL;
+extern LISPTR BANG_BIND, BANG_SAFE_BIND, BANG_MV_BIND;
 
 void isactr_model_init(void);
 void isactr_model_release(void);
 bool isactr_model_load(FILE* in, FILE* out, FILE* err);
 void isactr_model_run(double dDur);
+
+void isactr_model_warning(const char* msg);
 
 void isactr_define_chunk_type(LISPTR ct);
 
@@ -44,5 +49,8 @@ void isactr_add_production(LISPTR name, LISPTR lhs, LISPTR rhs, LISPTR vars);
 
 // note: takes a Symbol
 void isactr_set_goal_focus(LISPTR chunk_name);
+
+// true if x is a variable by ACT-R convention i.e. a symbol whose name starts with '='
+bool is_variable(LISPTR x);
 
 #endif // ISACTR_H

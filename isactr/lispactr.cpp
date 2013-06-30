@@ -65,11 +65,54 @@ static bool is_clause_start(LISPTR x)
 	return false;
 } // is_clause_start
 
-static bool is_variable(LISPTR x)
+static bool is_slot_modifier(LISPTR x)
 {
-	return symbolp(x) &&
-		  '=' == string_text(symbol_name(x))[0];
-} // is_variable
+	return (x == MINUS) ||
+		   (x == LT) ||
+		   (x == LEQ) ||
+		   (x == GT) ||
+		   (x == GEQ) ||
+		   (x == EQUALS);
+} // is_slot_modifier
+
+// buffer-test ::= =buffer-name> isa chunk-type slot-test*
+// slot-test ::= {slot-modifier} slot-name slot-value
+// slot-modifier ::= [= | - | < | > | <= | >=]
+static LISPTR translate_slot_test_sequence(LISPTR p, LISPTR* pvars)
+{
+	if (!consp(p)) {
+		return p;
+	}
+	if (is_clause_start(car(p))) {
+		return NIL;						// start of new clause, end of test sequence
+	}
+	// default modifier is '='
+	LISPTR modifier = EQUALS;
+	LISPTR slotName = car(p);
+	LISPTR value = cadr(p);
+	p = cddr(p);
+	if (is_slot_modifier(slotName)) {
+		modifier = slotName;
+		slotName = value;
+		value = car(p); p = cdr(p);
+	}
+	// replace variables of the form =name with shared dotted pairs (<var>.NIL)
+	if (is_variable(value)) {
+		LISPTR binding = assoc(value, *pvars);
+		if (binding==NIL) {
+			binding = cons(value,NIL);
+			*pvars = cons(binding, *pvars);
+			printf("new binding at 0x%08x: ", binding); lisp_print(binding, stdout); printf("\n");
+		} else {
+			printf("old binding at 0x%08x: ", binding); lisp_print(binding, stdout); printf("\n");
+		}
+		value = binding;
+	}
+	// Represent the test as a triplet (modifier slot-name value)
+	LISPTR test = cons(modifier, cons(slotName, cons(value, NIL)));
+	// Return the list of tests
+	return cons(test, translate_slot_test_sequence(p, pvars));
+}
 
 static LISPTR copy_test(LISPTR p, LISPTR* pvars)
 {
@@ -77,18 +120,23 @@ static LISPTR copy_test(LISPTR p, LISPTR* pvars)
 		return p;
 	}
 	LISPTR item = car(p);
-	if (!is_clause_start(item)) {
-		if (is_variable(item)) {
-			LISPTR binding = assoc(item, *pvars);
-			if (binding==NIL) {
-				binding = cons(item,NIL);
-				*pvars = cons(binding, *pvars);
-			}
-			item = binding;
-		}
-		return cons(item, copy_test(cdr(p), pvars));
+	if (is_clause_start(item)) {
+		return NIL;
 	}
-	return NIL;
+	if (is_variable(item)) {
+		LISPTR binding = assoc(item, *pvars);
+		if (binding==NIL) {
+			binding = cons(item,NIL);
+			printf("new binding at 0x%08x: ", binding); lisp_print(binding, stdout); printf("\n");
+			*pvars = cons(binding, *pvars);
+		} else {
+			printf("old binding at 0x%08x: ", binding); lisp_print(binding, stdout); printf("\n");
+		}
+		item = binding;
+	} else if (consp(item)) {
+		item = copy_test(item, pvars);
+	}
+	return cons(item, copy_test(cdr(p), pvars));
 } // copy_test
 
 static LISPTR extract_buffer_name(LISPTR sym)
@@ -106,19 +154,34 @@ static LISPTR extract_buffer_name(LISPTR sym)
 static bool parse_condition(LISPTR* pp, LISPTR* pcond, LISPTR* pvars)
 {
 	LISPTR p = *pp;
-	if (consp(p)) {
-		if (is_bufspec(car(p))) {
-			*pcond = cons(BUFFER_TEST, cons(extract_buffer_name(car(p)), copy_test(cdr(p), pvars)));
-			p = cdr(p);
-			while (consp(p) && !is_bufspec(car(p))) {
-				p = cdr(p);
-			}
-			assert(p==NIL || is_bufspec(car(p)));
-			*pp = p;
-			return true;
-		}
+	if (!consp(p) || !is_clause_start(car(p))) {
+		lisp_error(L"invalid condition in production LHS");
+		return false;
 	}
-	return false;
+	switch (first_char(car(p))) {
+	case '=':		// buffer test
+		// buffer-test ::= =buffer-name> isa chunk-type slot-test*
+		// Note: We treat the chunk-type test as just another slot-test.
+		*pcond = cons(BUFFER_TEST, cons(extract_buffer_name(car(p)), translate_slot_test_sequence(cdr(p), pvars)));
+		break;
+	case '?':		// buffer query
+		*pcond = cons(BUFFER_QUERY, cons(extract_buffer_name(car(p)), copy_test(cdr(p), pvars)));
+		break;
+	case '!':
+		// such as !output! or !eval! or !bind!
+		*pcond = cons(car(p), copy_test(cdr(p), pvars));
+		break;
+	default:
+		lisp_error(L"invalid buffer-spec in LHS condition");
+		return false;
+	} // switch
+	p = cdr(p);
+	while (consp(p) && !is_clause_start(car(p))) {
+		p = cdr(p);
+	}
+	assert(p==NIL || is_clause_start(car(p)));
+	*pp = p;
+	return true;
 }
 
 static bool parse_action(LISPTR* pp, LISPTR* pact, LISPTR* pvars)
@@ -141,6 +204,7 @@ static bool parse_action(LISPTR* pp, LISPTR* pact, LISPTR* pvars)
 		*pact = cons(CLEAR_BUFFER, cons(extract_buffer_name(car(p)), NIL));
 		break;
 	case '!':
+		// for example !eval! !bind! !output! or !stop!
 		*pact = cons(car(p), copy_test(cdr(p), pvars));
 		break;
 	default:
@@ -204,7 +268,7 @@ LISPTR p(LISPTR args)
 	// car(args) = name of the production
 	// cdr(args) = production (<LHS> ==> <RHS>)
 	if (!consp(args)) {
-		lisp_error(L"production not list");
+		lisp_error(L"production isn't a list");
 	} else {
 		LISPTR name = car(args);
 		if (!symbolp(name)) {
@@ -212,7 +276,7 @@ LISPTR p(LISPTR args)
 		} else {
 			LISPTR lhs = NIL;
 			LISPTR rhs = NIL;
-			LISPTR vars = NIL;		// alist of variables
+			LISPTR vars = NIL;		// a-list of variables
 			if (parse_production(cdr(args), &lhs, &rhs, &vars)) {
 				isactr_add_production(name, lhs, rhs, vars);
 			}
