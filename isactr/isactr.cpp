@@ -182,7 +182,9 @@ static bool precedes(isactr_event* evt1, isactr_event* evt2)
 	if (evt1->time != evt2->time) {
 		return evt1->time < evt2->time;
 	}
-	return evt1->priority > evt2->priority;
+	// note: simultaneous events of equal priority
+	// are queue FIFO.
+	return evt1->priority >= evt2->priority;
 }
 
 void isactr_push_event(isactr_event* evt)
@@ -278,9 +280,11 @@ static void event_action_set_buffer_chunk(isactr_event* evt)
 		area = L"DECLARATIVE";
 	}
 
-	fprintf(model.out, "     %5.3f   %-22ls %s %ls %ls REQUESTED %s\n",
+	fprintf(model.out, "     %5.3f   %-22ls %s %ls %ls %s\n",
 		model.time, area, "SET-BUFFER-CHUNK",
-		string_text(symbol_name(evt->buffer)), string_text(symbol_name(chunkName)), "NIL");
+		string_text(symbol_name(evt->buffer)), string_text(symbol_name(chunkName)), 
+		(evt->requested ? "" : "REQUESTED NIL")
+		);
 
 	isactr_schedule_event(model.time, PRIORITY_MIN, event_action_conflict_resolution);
 
@@ -342,6 +346,7 @@ static void event_action_retrieved(isactr_event* evt)
 	isactr_event* evt2 = isactr_schedule_event(model.time, PRIORITY_MAX, event_action_set_buffer_chunk);
 	evt2->buffer = RETRIEVAL;
 	evt2->chunk = evt->chunk;
+	evt2->requested = true;
 }
 
 static void event_action_start_retrieval(isactr_event* evt)
@@ -503,25 +508,31 @@ void isactr_fire_production(LISPTR p)
 // true if the named slot is in the chunk and its value matches the specified value.
 // Note that (for equality only) value can be a (var.val) pair, which is matched if
 // val != NIL, or bound if if val==NIL.
-static bool slot_match(LISPTR chunk, LISPTR modifier, LISPTR slot, LISPTR value)
+static bool slot_match(LISPTR chunk, LISPTR modifier, LISPTR slotName, LISPTR value)
 {
-	bool bMatch = false;
+	bool bResult = false;
 	if (inner_trace) {
-		fprintf(model.out, "slot_match %ls %ls, ", string_text(symbol_name(modifier)), string_text(symbol_name(slot)));
+		fprintf(model.out, "slot_match %ls %ls, ", string_text(symbol_name(modifier)), string_text(symbol_name(slotName)));
 		lisp_print(value, stdout); fprintf(model.out, ", "); lisp_print(chunk, stdout);
 	}
 	while (consp(chunk)) {
-		if (slot == car(chunk)) {
+		if (car(chunk) == slotName) {
 			// slot found, match the value
 			LISPTR slotVal = cadr(chunk);
+			bool bMatch;
 			if (modifier == EQUALS) {
 				if (!consp(value)) {
+					// atomic value, must be eql to slot value
 					bMatch = eql(value, slotVal);
 				} else if (cdr(value)!=NIL) {
+					// variable (var.val) compare to 
 					bMatch = eql(cdr(value), slotVal);
-				} else {
+				} else if (slotVal != NIL) {
+					// unbound variable, bind to value from slot
 					rplacd(value, slotVal);
 					bMatch = true;
+				} else {
+					bMatch = false;
 				}
 			} else if (modifier == MINUS) {
 				if (consp(value)) {
@@ -544,21 +555,25 @@ static bool slot_match(LISPTR chunk, LISPTR modifier, LISPTR slot, LISPTR value)
 						bMatch = (dValue > dSlotVal);
 					} else if (modifier == GEQ) {
 						bMatch = (dValue >= dSlotVal);
+					} else {
+						lisp_error(L"invalid slot modifier");
+						bMatch = false;
 					}
 				}
 			}
+			bResult = bMatch;
 			break;
 		}
 		chunk = cddr(chunk);
 	}
 	if (chunk==NIL && value==NIL) {
 		// Treat slot not found same as (slot NIL).
-		bMatch = true;
+		bResult = true;
 	}
 	if (inner_trace) {
-		fprintf(model.out, " => %s\n", bMatch ? "true" : "false");
+		fprintf(model.out, " => %s\n", bResult ? "true" : "false");
 	}
-	return bMatch;
+	return bResult;
 } // slot_match
 
 // Test a buffer for match to condition

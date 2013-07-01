@@ -3,10 +3,11 @@
 
 #define VERSION_MAJOR 0
 #define VERSION_MINOR 0
-#define VERSION_RELEASE 13
+#define VERSION_RELEASE 14
 #define VERSION_BUILD 0
 
 /*
+0.0.14.0	2013.06.30	spike	addition.lisp run! Only diff. in trace is extra CONFLICT-RESOLUTION at end.
 0.0.13.0	2013.06.30	spike	!output! working well, count.lisp runs 100%, event order still not exactly right.
 0.0.12.0	2013.06.29	spike	parse buffer queries (?buffer> on LHS)
 0.0.11.0	2013.06.27	spike	getting the basic LHS/RHS events in the queue, and in the right order.

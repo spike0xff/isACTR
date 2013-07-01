@@ -75,6 +75,24 @@ static bool is_slot_modifier(LISPTR x)
 		   (x == EQUALS);
 } // is_slot_modifier
 
+static LISPTR make_binding(LISPTR var, LISPTR* pvars)
+{
+	assert(is_variable(var));
+	assert(pvars != NULL);
+
+	// look up binding of variable in binding list:
+	LISPTR binding = assoc(var, *pvars);
+	if (binding==NIL) {
+		// not bound, add to variable binding list
+		binding = cons(var,NIL);
+		*pvars = cons(binding, *pvars);
+		//printf("new binding at 0x%08x: ", binding); lisp_print(binding, stdout); printf("\n");
+	} else {
+		//printf("old binding at 0x%08x: ", binding); lisp_print(binding, stdout); printf("\n");
+	}
+	return binding;
+} // make_binding
+
 // buffer-test ::= =buffer-name> isa chunk-type slot-test*
 // slot-test ::= {slot-modifier} slot-name slot-value
 // slot-modifier ::= [= | - | < | > | <= | >=]
@@ -98,15 +116,7 @@ static LISPTR translate_slot_test_sequence(LISPTR p, LISPTR* pvars)
 	}
 	// replace variables of the form =name with shared dotted pairs (<var>.NIL)
 	if (is_variable(value)) {
-		LISPTR binding = assoc(value, *pvars);
-		if (binding==NIL) {
-			binding = cons(value,NIL);
-			*pvars = cons(binding, *pvars);
-			printf("new binding at 0x%08x: ", binding); lisp_print(binding, stdout); printf("\n");
-		} else {
-			printf("old binding at 0x%08x: ", binding); lisp_print(binding, stdout); printf("\n");
-		}
-		value = binding;
+		value = make_binding(value, pvars);
 	}
 	// Represent the test as a triplet (modifier slot-name value)
 	LISPTR test = cons(modifier, cons(slotName, cons(value, NIL)));
@@ -124,15 +134,7 @@ static LISPTR copy_test(LISPTR p, LISPTR* pvars)
 		return NIL;
 	}
 	if (is_variable(item)) {
-		LISPTR binding = assoc(item, *pvars);
-		if (binding==NIL) {
-			binding = cons(item,NIL);
-			printf("new binding at 0x%08x: ", binding); lisp_print(binding, stdout); printf("\n");
-			*pvars = cons(binding, *pvars);
-		} else {
-			printf("old binding at 0x%08x: ", binding); lisp_print(binding, stdout); printf("\n");
-		}
-		item = binding;
+		item = make_binding(item, pvars);
 	} else if (consp(item)) {
 		item = copy_test(item, pvars);
 	}
